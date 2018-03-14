@@ -208,6 +208,14 @@ void loop() {
       decRPM = (axleRPM*axleGear)/motorGear;
       cartSpeed = ((wheelDiameter*3.14)*axleRPM*60)/63360;
       RPM = round(decRPM);
+      clearToggle = digitalRead(clearIn);
+      if (clearToggle == HIGH){
+        startToggle = LOW;
+        matrix1.print(00.00);
+        matrix1.writeDisplay();
+        clockTime = 0;
+        clearToggle = LOW;
+        }
       matrix2.print(RPM);
       matrix2.writeDisplay();
       matrix3.print(cartSpeed);
