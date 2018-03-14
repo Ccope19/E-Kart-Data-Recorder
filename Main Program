@@ -1,0 +1,337 @@
+/*
+-------------------------------------------------------------
+E-Kart Data Logger
+Created By: Ccope19
+1/21/18
+-------------------------------------------------------------
+Circuit Design:
+Hall Effect Input = pin 2 (External Interupt)
+Start/Stop Button Input = pin 3 (External Interupt)
+Red LED Output = pin 4
+Green LED Output = pin 5 
+Clear Button Input = pin 6
+Card Detect Input = pin 7(with internal pullup resistor)
+Chip Select (Slave Select) Output = pin 10
+MOSI = pin 11
+MISO = pin 12
+Clock = pin 13
+SDA = A4
+SCL = A5
+-------------------------------------------------------------
+Remember to download the required arduino libraries!
+-------------------------------------------------------------
+*/
+
+#include <math.h>
+#include <SPI.h>
+#include <SD.h>
+#include <Wire.h>
+#include "RTClib.h"
+#include <Adafruit_GFX.h>
+#include "Adafruit_LEDBackpack.h"
+
+const int sensor = 2;       //Hall Effect sensor pin
+const int startIn = 3;         //Start/Stop button pin
+const int redLED = 4;       //Red LED pin (wired on the datalogger shield)
+const int greenLED = 5;     //Green LED pin (wired on the datalogger shield)
+const int clearIn = 6;      //Clear button pin
+const int cardDetect = 7;   //Card Detect pin (wired on the datalogger shield)
+const int chipSelect = 10;  //Chip Select (Slave Select) pin
+
+const int wheelDiameter = 11; //Outer diameter of rear wheel (inches)
+const int axleGear = 60; //Tooth count of axle sprocket
+const int motorGear = 24; //Tooth count of motor sprocket 
+
+volatile int startToggle = LOW;    //turns the start stop button into a toggle
+volatile int revCount = 0;   //number of half revolutions recorded   
+
+RTC_PCF8523 rtc; //configures the RTC, default I2C address is 0x68 and can't be changed
+
+Adafruit_7segment matrix1 = Adafruit_7segment(); //Red Display (Time)
+Adafruit_7segment matrix2 = Adafruit_7segment(); //Yellow Display (Motor RPM)
+Adafruit_7segment matrix3 = Adafruit_7segment(); //Green Display (Speed)
+
+// the logging file
+File logfile;
+
+void error(char *str) {   
+//creates an infinite loop in case of an error in the system, must reset Arduino
+  Serial.print("error: ");
+  Serial.println(str);
+  
+  // red LED indicates error
+  digitalWrite(redLED, HIGH);
+
+  while(1);
+}
+
+void setup() {  
+  pinMode(sensor, INPUT);
+  pinMode(redLED, OUTPUT);
+  pinMode(greenLED, OUTPUT);
+  pinMode(cardDetect, INPUT_PULLUP);
+  pinMode(clearIn, INPUT);
+  pinMode(startIn, INPUT);
+  attachInterrupt(digitalPinToInterrupt(startIn),timer,FALLING);
+  pinMode(chipSelect, OUTPUT);
+  
+  Serial.begin(57600);    //sets the serial monitor's baud rate to 57,600
+  
+  matrix1.begin(0x70); //red display set to address 0x70
+  matrix2.begin(0x71); //yellow display set to address 0x71
+  matrix3.begin(0x72); //green display set to address 0x72
+  //start at 0x70 and short the following on the physical drivers to add: A0 = +1, A2 = +2, A3 = +4
+
+  if (digitalRead(cardDetect)==HIGH){
+    while (digitalRead(cardDetect)==HIGH && digitalRead(clearIn)==LOW){   //allows a last minute reminder for user to insert SD card. Once inserted, press and hold Clear for up to 2 seconds.  If continued w/o card, system will have a red error light and need reset
+     matrix1.writeDigitRaw(0,B00000000);
+     matrix1.writeDigitRaw(1,B01010100);
+     matrix1.writeDigitRaw(3,B01011100);
+     matrix1.writeDigitRaw(4,B00000000);
+     matrix1.writeDisplay();    //displays "no"
+     matrix2.writeDigitRaw(0,B01011000);
+     matrix2.writeDigitRaw(1,B01110111);
+     matrix2.writeDigitRaw(3,B01010000);
+     matrix2.writeDigitRaw(4,B01011110);
+     matrix2.writeDisplay();    //displays "cArd"
+     delay(500);    //the following cycles the decimal point in all 4 places of the third display
+     matrix3.writeDigitRaw(0,B10000000);
+     matrix3.writeDigitRaw(1,B00000000);
+     matrix3.writeDigitRaw(3,B00000000);
+     matrix3.writeDigitRaw(4,B00000000);
+     matrix3.writeDisplay();
+     delay(500);
+     matrix3.writeDigitRaw(0,B00000000);
+     matrix3.writeDigitRaw(1,B10000000);
+     matrix3.writeDigitRaw(3,B00000000);
+     matrix3.writeDigitRaw(4,B00000000);
+     matrix3.writeDisplay();
+     delay(500);
+     matrix3.writeDigitRaw(0,B00000000);
+     matrix3.writeDigitRaw(1,B00000000);
+     matrix3.writeDigitRaw(3,B10000000);
+     matrix3.writeDigitRaw(4,B00000000);
+     matrix3.writeDisplay();
+     delay(500);
+     matrix3.writeDigitRaw(0,B00000000);
+     matrix3.writeDigitRaw(1,B00000000);
+     matrix3.writeDigitRaw(3,B00000000);
+     matrix3.writeDigitRaw(4,B10000000);
+     matrix3.writeDisplay();
+     delay(500);
+    }
+  }
+
+  Wire.begin();
+  if (! rtc.begin()) {
+    Serial.println("Couldn't find RTC");
+    while (1);
+  }
+  if (! rtc.initialized()) {
+    Serial.println("RTC is NOT running!");
+    // following line sets the RTC to the date & time this sketch was compiled
+    // rtc.adjust(DateTime(F(__DATE__), F(__TIME__)));
+  }
+
+  // initialize the SD card
+  Serial.print("Initializing SD card...");  
+  // see if the card is present and can be initialized:
+  if (!SD.begin(chipSelect)) {
+    error("Card failed, or not present");
+  }
+  Serial.println("card initialized.");
+
+    // create a new file
+  char filename[] = "LOGGER00.CSV";
+  for (uint8_t i = 0; i < 100; i++) {
+    filename[6] = i/10 + '0';
+    filename[7] = i%10 + '0';
+    if (! SD.exists(filename)) {
+      // only open a new file if it doesn't exist
+      logfile = SD.open(filename, FILE_WRITE); 
+      break;  // leave the loop!
+    }
+  }
+  
+  if (! logfile) {
+    error("couldnt create file");
+  }
+  
+  Serial.print("Logging to: ");
+  Serial.println(filename);
+
+  logfile.println("millis,stamp,datetime,clockTime,RPM,cartSpeed");    
+  Serial.println("millis,stamp,datetime,clockTime,RPM,cartSpeed");
+
+  matrix1.print(10000, DEC);
+  matrix1.writeDisplay();
+  matrix2.print(10000, DEC);
+  matrix2.writeDisplay();
+  matrix3.print(10000, DEC);
+  matrix3.writeDisplay();
+  delay(500);
+  matrix1.print(00.00, DEC);
+  matrix1.writeDisplay();
+  matrix2.print(0000, DEC);
+  matrix2.writeDisplay();
+  matrix3.print(00.00, DEC);
+  matrix3.writeDisplay();
+}
+
+
+void loop() {   
+  int clockTime = 0;    //time from button start
+  int RPM = 0;    //Motor RPMs
+  float cartSpeed = 0;   //speed of the cart
+  int timeDifference = 0; //
+  int axleRPM = 0;    //axle rpm
+  int clearToggle = LOW;    //turns the clear button into a toggle
+  float decRPM = 0;   //decimal version
+  int minutes = 0;
+  int seconds = 0;
+  unsigned long mainClock = millis();
+  unsigned long loopTime = millis();
+
+  while (1==1){
+    
+    while (startToggle == LOW){
+      revCount = 0;
+      mainClock = millis();
+      attachInterrupt(digitalPinToInterrupt(sensor), detect, FALLING);
+      while (revCount == 0){ //update mainClock until magnet is detected
+        mainClock = millis();
+      }
+      while (revCount == 1){}  //wait until magnet hits a 2nd time
+      timeDifference = millis() - mainClock;
+      detachInterrupt(sensor);
+      axleRPM = 60000/(2*timeDifference);
+      decRPM = (axleRPM*axleGear)/motorGear;
+      cartSpeed = ((wheelDiameter*3.14)*axleRPM*60)/63360;
+      RPM = round(decRPM);
+      matrix2.print(RPM);
+      matrix2.writeDisplay();
+      matrix3.print(cartSpeed);
+      matrix3.writeDisplay();
+      Serial.print(RPM);
+      Serial.print(cartSpeed);
+      Serial.print(" ");
+      delay(50);
+    }
+    //rpm & speed but no clock or recording
+     
+     while (startToggle == HIGH){
+      DateTime now = rtc.now; 
+
+     //******************
+     revCount = 0;
+      mainClock = millis();
+      loopTime = millis();
+      attachInterrupt(digitalPinToInterrupt(sensor), detect, FALLING);
+      while (revCount == 0 && millis() < loopTime + 900){ //update mainClock until magnet is detected or 900ms has passed
+        mainClock = millis();
+      }
+      while (revCount == 1 && millis() < loopTime + 900){}  //wait until magnet hits a 2nd time or 900ms has passed
+      timeDifference = millis() - mainClock;
+      detachInterrupt(sensor);
+      axleRPM = 60000/(2*timeDifference);
+      decRPM = (axleRPM*axleGear)/motorGear;
+      cartSpeed = ((wheelDiameter*3.14)*axleRPM*60)/63360;
+      RPM = round(decRPM);
+  
+     digitalWrite(greenLED, HIGH);
+  
+     // log milliseconds since starting
+     uint32_t m = millis();
+     logfile.print(m);           // milliseconds since start
+     logfile.print(", ");    
+     Serial.print(m);         // milliseconds since start
+     Serial.print(", ");  
+  
+     // log time
+     logfile.print(now.unixtime()); // seconds since 1/1/1970
+     logfile.print(", ");  
+     logfile.print(now.month(), DEC);
+     logfile.print("/");
+     logfile.print(now.day(), DEC);
+     logfile.print("/");
+     logfile.print(now.year(), DEC);
+     logfile.print(", ");
+     logfile.print(now.hour(), DEC);
+     logfile.print(":");
+     logfile.print(now.minute(), DEC);
+     logfile.print(":");
+     logfile.print(now.second(), DEC);
+     logfile.print("   ");  
+     logfile.print(clockTime);
+     logfile.print(", ");    
+     logfile.print(RPM);
+     logfile.print(", ");    
+     logfile.print(cartSpeed);
+     logfile.print("   "); 
+
+     Serial.print(now.unixtime()); // seconds since 1/1/1970
+     Serial.print(", ");  
+     Serial.print(now.month(), DEC);
+     Serial.print("/");
+     Serial.print(now.day(), DEC);
+     Serial.print("/");
+     Serial.print(now.year(), DEC);
+     Serial.print(", ");
+     Serial.print(now.hour(), DEC);
+     Serial.print(":");
+     Serial.print(now.minute(), DEC);
+     Serial.print(":");
+     Serial.print(now.second(), DEC);
+     Serial.print("   ");  
+     Serial.print(clockTime);
+     Serial.print(", ");    
+     Serial.print(RPM);
+     Serial.print(", ");    
+     Serial.print(cartSpeed);
+     Serial.print("   "); 
+    
+     logfile.println();
+      Serial.println();
+  
+     digitalWrite(greenLED, LOW);
+  
+     // blink LED to show we are syncing data to the card & updating FAT!
+     digitalWrite(redLED, HIGH);
+      logfile.flush();
+      digitalWrite(redLED, LOW);
+
+     while (loopTime < 1000){}
+
+     clockTime = clockTime ++;
+
+     seconds = round(clockTime % 60);
+     minutes = round((clockTime / 60) % 10);
+
+     matrix1.writeDigitNum(0, (minutes / 10) % 10);
+     matrix1.writeDigitNum(1, minutes % 10, true);
+     matrix1.writeDigitNum(3, (seconds / 10) % 10);
+     matrix1.writeDigitNum(4, seconds % 10);
+     matrix1.writeDisplay();
+     matrix2.print(RPM);
+     matrix2.writeDisplay();
+     matrix3.print(cartSpeed);
+     matrix3.writeDisplay();
+     
+      clearToggle = digitalRead(clearIn);
+      if (clearToggle == HIGH){
+        startToggle = LOW;
+        matrix1.print(00.00);
+        matrix1.writeDisplay();
+        clockTime = 0;
+        clearToggle = LOW;
+        }
+      }
+    }
+  }
+void detect() {
+  revCount ++;
+}
+
+void timer() {
+  startToggle = !startToggle;
+}
