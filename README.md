@@ -2,7 +2,6 @@
 This project is unlicenced and open-source to the public domain.  If one feels so inclined, they may cite the original creator (me) as my account username "Ccope19". 
 
 **Schematic and PCB design (get gerber files here):**
-
  https://easyeda.com/Ccope19/E_Kart_Data_Recorder-3d7f9e403c7b447eae7c0b1731039f12 
 
 **Purchasing, assembly, and programming instructions:** *(PLEASE UPDATE ME)* 
