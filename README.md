@@ -16,7 +16,7 @@ The project is powered by the 4 lead-acid batteries that power the rest of the g
 3)  If the system continues with no SD card, the set-up portion of the code catches this and sets the device in an error state, requiring a reset.
 4)  System now sets up and displays should go to ---- on all three and then 00.00, 0000, and 00.00 in order from top to bottom
 5)  The program is now in it's "run w/o recording" mode so it will display the current motor RPM and cart speed without updating the clock or saving data.
-6)  When the start/stop button is pressed, the device instantly detects this and switches modes after it finishes a cycle.  A cycle lasts however long it takes for the sensor to detect a magnet twice (a timeout should be added but this works for now)
+6)  When the start/stop button is pressed, the device instantly detects this and switches modes after it finishes a cycle.  A cycle lasts however long it takes for the sensor to detect a magnet twice or until it times-out at 1.8 seconds. This makes the minimum detectable speed 1.09 mph
 7)  The device is now in it's "run and record w/ time" mode where it displays the clock from the start of the cycle as well as recording information in th format: "unix time, mm/dd/yyyy, hh:mm:ss  [clock], [RPM], [Speed]  " in a .CSV (comma-seperated value) file
 8)  If the start/stop button is pressed, the device detects this and stops the clock as well as stopping the recording of data.  It then switches back to the default "run w/o recording" mode at the end of the cycle.  
 9)  If the clear button is held down for on cycle (as described above in 6), the device performs the same task as 8 but also resets the clock to 00.00
