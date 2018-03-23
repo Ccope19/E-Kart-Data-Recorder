@@ -197,11 +197,12 @@ void loop() {
     while (startToggle == LOW){
       revCount = 0;
       mainClock = millis();
+      loopTime = millis();
       attachInterrupt(digitalPinToInterrupt(sensor), detect, FALLING);
-      while (revCount == 0){ //update mainClock until magnet is detected
+      while (revCount == 0 && millis() < loopTime + 900){ //update mainClock until magnet is detected
         mainClock = millis();
       }
-      while (revCount == 1){}  //wait until magnet hits a 2nd time
+      while (revCount == 1 && millis() < loopTime + 900){}  //wait until magnet hits a 2nd time
       timeDifference = millis() - mainClock;
       detachInterrupt(sensor);
       axleRPM = 60000/(2*timeDifference);
@@ -229,9 +230,7 @@ void loop() {
      
      while (startToggle == HIGH){
       DateTime now = rtc.now; 
-
-     //******************
-     revCount = 0;
+      revCount = 0;
       mainClock = millis();
       loopTime = millis();
       attachInterrupt(digitalPinToInterrupt(sensor), detect, FALLING);
