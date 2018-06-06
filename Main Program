@@ -184,7 +184,7 @@ void loop() {
   int RPM = 0;    //Motor RPMs
   float cartSpeed = 0;   //speed of the cart
   int timeDifference = 0; //
-  int axleRPM = 0;    //axle rpm
+  float axleRPM = 0;    //axle rpm
   int clearToggle = LOW;    //turns the clear button into a toggle
   float decRPM = 0;   //decimal version
   int minutes = 0;
